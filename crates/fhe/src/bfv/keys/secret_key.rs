@@ -133,6 +133,16 @@ impl SecretKey {
             level,
         })
     }
+
+    /// Get the parameters of the secret key.
+    pub fn par(&self) -> &Arc<BfvParameters> {
+        &self.par
+    }
+
+    /// Get the coefficients of the secret key.
+    pub fn coeffs(&self) -> &[i64] {
+        self.coeffs.as_ref()
+    }
 }
 
 impl FheParametrized for SecretKey {

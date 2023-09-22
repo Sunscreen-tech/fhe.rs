@@ -114,7 +114,7 @@ impl BfvParameters {
     }
 
     /// Returns the context corresponding to the level.
-    pub(crate) fn ctx_at_level(&self, level: usize) -> Result<&Arc<Context>> {
+    pub fn ctx_at_level(&self, level: usize) -> Result<&Arc<Context>> {
         self.ctx
             .get(level)
             .ok_or_else(|| Error::DefaultError("No context".to_string()))
@@ -214,6 +214,11 @@ impl BfvParameters {
             .set_moduli_sizes(&vec![62usize; num_moduli])
             .build_arc()
             .unwrap()
+    }
+
+    /// Get error variance
+    pub fn variance(&self) -> usize {
+        self.variance
     }
 }
 
