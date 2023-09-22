@@ -5,12 +5,11 @@
 
 use std::sync::Arc;
 
-use fhe::bfv::{BfvParameters, SecretKey};
+use crate::bfv::{BfvParameters, SecretKey};
+use crate::errors::Result;
 use fhe_math::rq::{traits::TryConvertFrom, Poly, Representation};
 use rand::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
-
-use crate::{errors::Result, Error};
 
 /// Each party uses the `PublicKeyShare` to generate their share of the public key and participate
 /// in the "Protocol 1: EncKeyGen" protocol detailed in Multiparty BFV (p6).
@@ -27,15 +26,15 @@ impl PublicKeyShare {
         crp: &Poly,
         rng: &mut R,
     ) -> Result<Self> {
-        let par = sk_share.par().clone();
+        let par = sk_share.par.clone();
         // TODO Assuming level zero is the only thing that makes sense here?
         let ctx = par.ctx_at_level(0)?;
 
         // Sample error
-        let e = Zeroizing::new(Poly::small(ctx, Representation::Ntt, par.variance(), rng)?);
+        let e = Zeroizing::new(Poly::small(ctx, Representation::Ntt, par.variance, rng)?);
         // Convert secret key to usable polynomial
         let mut s = Zeroizing::new(Poly::try_convert_from(
-            sk_share.coeffs(),
+            sk_share.coeffs.as_ref(),
             ctx,
             false,
             Representation::PowerBasis,

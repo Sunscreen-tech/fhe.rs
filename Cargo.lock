@@ -372,17 +372,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fhe-threshold"
-version = "0.1.0-beta.5"
-dependencies = [
- "fhe",
- "fhe-math",
- "rand",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
 name = "fhe-traits"
 version = "0.1.0-beta.5"
 dependencies = [
