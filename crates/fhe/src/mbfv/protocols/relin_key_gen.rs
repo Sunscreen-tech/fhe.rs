@@ -128,21 +128,20 @@ impl RelinKeyShare<R1> {
         let par = sk_share.par.clone();
         let ctx = par.ctx_at_level(0)?;
 
-        let mut s = Zeroizing::new(Poly::try_convert_from(
+        let s = Zeroizing::new(Poly::try_convert_from(
             sk_share.coeffs.as_ref(),
             ctx,
             false,
             Representation::PowerBasis,
         )?);
-        s.change_representation(Representation::Ntt);
         let rns = RnsContext::new(&sk_share.par.moduli[..crp.len()])?;
         let h0 = crp
             .iter()
             .enumerate()
             .map(|(i, a)| {
-                // TODO we may need power basis representation here
                 let w = rns.get_garner(i).unwrap();
-                let w_s = Zeroizing::new(w * s.as_ref());
+                let mut w_s = Zeroizing::new(w * s.as_ref());
+                w_s.change_representation(Representation::Ntt);
 
                 let e = Zeroizing::new(Poly::small(ctx, Representation::Ntt, par.variance, rng)?);
 
@@ -150,7 +149,6 @@ impl RelinKeyShare<R1> {
                 h.disallow_variable_time_computations();
                 h.change_representation(Representation::Ntt);
                 h *= u.as_ref();
-
                 h += w_s.as_ref();
                 h += e.as_ref();
                 Ok(h)
