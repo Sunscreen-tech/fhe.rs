@@ -16,6 +16,11 @@ use itertools::izip;
 use rand::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
 
+// TODO this API is messed up (see tests for example usage). Need to make it simple for both the
+// aggregator perspective and the individual party perpective.
+// Maybe make both a RlkShare and RlkAggregator type, both can use the Round types as markers.
+// Probably need to change up with Aggregate trait or just get rid of it in favor of .collect()
+
 pub trait Round: sealed::Sealed {}
 
 /// Marks the shares produced in round 1
@@ -135,6 +140,7 @@ impl RelinKeyShare<R1> {
             .iter()
             .enumerate()
             .map(|(i, a)| {
+                // TODO we may need power basis representation here
                 let w = rns.get_garner(i).unwrap();
                 let w_s = Zeroizing::new(w * s.as_ref());
 
@@ -311,20 +317,25 @@ impl Aggregate for RelinKeyShare<R2> {
         ))?;
 
         // TODO this is correct right? write it out to be sure...
-        let mut h = share.h0;
-        izip!(h.iter_mut(), share.h1.iter()).for_each(|(hi, h1)| *hi += h1);
+        let mut h0 = share.h0;
+        izip!(h0.iter_mut(), share.h1.iter()).for_each(|(hi, h1)| *hi += h1);
         for sh in shares {
-            izip!(h.iter_mut(), sh.h0.iter(), sh.h1.iter()).for_each(|(hi, h0i, h1i)| {
+            izip!(h0.iter_mut(), sh.h0.iter(), sh.h1.iter()).for_each(|(hi, h0i, h1i)| {
                 *hi += h0i;
                 *hi += h1i;
             });
         }
+        let mut h1 = r1.h1;
+        izip!(h0.iter_mut(), h1.iter_mut()).for_each(|(h0i, h1i)| {
+            h0i.change_representation(Representation::NttShoup);
+            h1i.change_representation(Representation::NttShoup);
+        });
 
         let ksk = KeySwitchingKey {
             par,
             seed: None,
-            c0: h,
-            c1: r1.h1,
+            c0: h0,
+            c1: h1,
             ciphertext_level: 0,
             ctx_ciphertext: ctx.clone(),
             ksk_level: 0,
@@ -343,12 +354,112 @@ mod sealed {
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
-    // use fhe_math::rq::{Poly, Representation};
-    // use fhe_traits::{FheEncoder, FheEncrypter};
-    // use rand::thread_rng;
-    //
-    // use crate::bfv::{BfvParameters, Encoding, Plaintext, SecretKey};
-    //
-    // const NUM_PARTIES: usize = 11;
+    use super::*;
+    use fhe_math::rq::{Poly, Representation};
+    use fhe_traits::{FheEncoder, FheEncrypter};
+    use rand::thread_rng;
+
+    use crate::{
+        bfv::{BfvParameters, Encoding, Plaintext, SecretKey},
+        mbfv::protocols::{DecryptionShare, PublicKeyShare},
+    };
+
+    const NUM_PARTIES: usize = 11;
+
+    #[test]
+    fn relinearization_works() {
+        let mut rng = thread_rng();
+        for par in [
+            // BfvParameters::default_arc(1, 8),
+            BfvParameters::default_arc(6, 8),
+        ] {
+            // Just support level 0 for now.
+            let level = 0;
+            for _ in 0..20 {
+                let crp: Vec<Poly> = (0..par.moduli().len())
+                    .map(|_| {
+                        Poly::random(
+                            par.ctx_at_level(level).unwrap(),
+                            Representation::Ntt,
+                            &mut rng,
+                        )
+                    })
+                    .collect();
+
+                let mut party_sks: Vec<SecretKey> = vec![];
+                let mut party_pks: Vec<PublicKeyShare> = vec![];
+                let mut party_rlks: Vec<RelinKeyGenerator> = vec![];
+
+                // Parties undergo round 1
+                for _ in 0..NUM_PARTIES {
+                    let sk_share = SecretKey::random(&par, &mut rng);
+                    party_sks.push(sk_share);
+                }
+                (0..NUM_PARTIES).for_each(|i| {
+                    let pk_share =
+                        PublicKeyShare::new(&party_sks[i], crp[0].clone(), &mut rng).unwrap();
+                    let rlk_generator =
+                        RelinKeyGenerator::new(&party_sks[i], &crp, &mut rng).unwrap();
+                    party_pks.push(pk_share);
+                    party_rlks.push(rlk_generator);
+                });
+
+                // Aggregate pk shares into public key
+                let public_key = PublicKeyShare::aggregate(party_pks).unwrap();
+
+                // Aggregate rlk r1 shares
+                let rlk_r1 = RelinKeyShare::aggregate(
+                    party_rlks.iter().map(|g| g.round_1(&mut rng).unwrap()),
+                )
+                .unwrap();
+
+                // Aggregate rlk r2 shares into relin key
+                let rlk = <RelinKeyShare<R2>>::aggregate(
+                    party_rlks
+                        .iter()
+                        .map(|g| g.round_2(&rlk_r1, &mut rng).unwrap()),
+                )
+                .unwrap();
+
+                // Create a couple random encrypted polynomials
+                let pt1 = Plaintext::try_encode(
+                    &[20u64],
+                    // &par.plaintext.random_vec(par.degree(), &mut rng),
+                    Encoding::poly_at_level(level),
+                    &par,
+                )
+                .unwrap();
+                // Create a couple random plaintext polynomials
+                let pt2 = Plaintext::try_encode(
+                    &[-7i64],
+                    // &par.plaintext.random_vec(par.degree(), &mut rng),
+                    Encoding::poly_at_level(level),
+                    &par,
+                )
+                .unwrap();
+                let ct1 = public_key.try_encrypt(&pt1, &mut rng).unwrap();
+                let ct2 = public_key.try_encrypt(&pt2, &mut rng).unwrap();
+
+                let mut ct = &ct1 * &ct2;
+                rlk.relinearizes(&mut ct).unwrap();
+                assert_eq!(ct.c.len(), 2);
+                let ct = Arc::new(ct);
+
+                // Parties perform a collective decryption
+                let decryption_shares = party_sks
+                    .iter()
+                    .map(|s| DecryptionShare::new(s, &ct, &mut rng).unwrap());
+                let pt = DecryptionShare::aggregate(decryption_shares).unwrap();
+                let expected_pt = Plaintext::try_encode(
+                    &[-140_i64],
+                    // &par.plaintext.random_vec(par.degree(), &mut rng),
+                    Encoding::poly_at_level(level),
+                    &par,
+                )
+                .unwrap();
+
+                assert_eq!(pt, expected_pt);
+            }
+        }
+    }
 }
