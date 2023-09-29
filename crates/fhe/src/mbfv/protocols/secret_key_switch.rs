@@ -178,7 +178,7 @@ mod tests {
     use std::sync::Arc;
 
     use fhe_math::rq::{Poly, Representation};
-    use fhe_traits::{FheEncoder, FheEncrypter};
+    use fhe_traits::{FheDecoder, FheEncoder, FheEncrypter};
     use rand::thread_rng;
 
     use crate::{
@@ -305,6 +305,62 @@ mod tests {
 
                     let pt2 = DecryptionShare::aggregate(decryption_shares).unwrap();
                     assert_eq!(pt1, pt2);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn collective_keys_enable_homomorphic_addition() {
+        let mut rng = thread_rng();
+        for par in [
+            BfvParameters::default_arc(1, 8),
+            BfvParameters::default_arc(6, 8),
+        ] {
+            for level in 0..=par.max_level() {
+                for _ in 0..20 {
+                    let crp =
+                        Poly::random(par.ctx_at_level(0).unwrap(), Representation::Ntt, &mut rng);
+
+                    let mut parties: Vec<Party> = vec![];
+
+                    // Parties collectively generate public key
+                    for _ in 0..NUM_PARTIES {
+                        let sk_share = SecretKey::random(&par, &mut rng);
+                        let pk_share =
+                            PublicKeyShare::new(&sk_share, crp.clone(), &mut rng).unwrap();
+                        parties.push(Party { sk_share, pk_share })
+                    }
+                    let public_key =
+                        PublicKeyShare::aggregate(parties.iter().map(|p| p.pk_share.clone()))
+                            .unwrap();
+
+                    // Parties encrypt two plaintexts
+                    let a = par.plaintext.random_vec(par.degree(), &mut rng);
+                    let b = par.plaintext.random_vec(par.degree(), &mut rng);
+                    let mut expected = a.clone();
+                    par.plaintext.add_vec(&mut expected, &b);
+
+                    let pt_a =
+                        Plaintext::try_encode(&a, Encoding::poly_at_level(level), &par).unwrap();
+                    let pt_b =
+                        Plaintext::try_encode(&b, Encoding::poly_at_level(level), &par).unwrap();
+                    let ct_a = public_key.try_encrypt(&pt_a, &mut rng).unwrap();
+                    let ct_b = public_key.try_encrypt(&pt_b, &mut rng).unwrap();
+
+                    // and add them together
+                    let ct = Arc::new(&ct_a + &ct_b);
+
+                    // Parties perform a collective decryption
+                    let decryption_shares = parties
+                        .iter()
+                        .map(|p| DecryptionShare::new(&p.sk_share, &ct, &mut rng).unwrap());
+                    let pt = DecryptionShare::aggregate(decryption_shares).unwrap();
+
+                    assert_eq!(
+                        Vec::<u64>::try_decode(&pt, Encoding::poly_at_level(level)).unwrap(),
+                        expected
+                    );
                 }
             }
         }
