@@ -42,6 +42,11 @@ impl SecretKeySwitchShare {
                 "Incompatible BFV parameters".to_string(),
             ));
         }
+        // Note: M-BFV implementation only supports ciphertext of length 2
+        if ct.c.len() != 2 {
+            return Err(Error::TooManyValues(ct.c.len(), 2));
+        }
+
         let par = sk_input_share.par.clone();
         let mut s_in = Zeroizing::new(Poly::try_convert_from(
             sk_input_share.coeffs.as_ref(),
@@ -68,9 +73,6 @@ impl SecretKeySwitchShare {
         )?);
 
         // Create h_i share
-        // TODO look at SecretKey::try_decrypt, probably need the `for i in 1..ct.c.len()` loop here.
-        // although I do think this is correct for len == 2, so for now:
-        assert_eq!(ct.c.len(), 2);
         let mut h_share = s_in.as_ref() - s_out.as_ref();
         h_share.disallow_variable_time_computations();
         h_share *= &ct.c[1];
