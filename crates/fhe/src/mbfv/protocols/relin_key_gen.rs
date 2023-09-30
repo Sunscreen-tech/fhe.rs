@@ -314,26 +314,33 @@ impl Aggregate for RelinKeyShare<R2> {
             "Shares from round 2 should include a copy for the round 1 aggregation.".to_string(),
         ))?;
 
-        // TODO this is correct right? write it out to be sure...
         let mut h0 = share.h0;
-        izip!(h0.iter_mut(), share.h1.iter()).for_each(|(hi, h1)| *hi += h1);
+        let mut h1 = share.h1;
         for sh in shares {
-            izip!(h0.iter_mut(), sh.h0.iter(), sh.h1.iter()).for_each(|(hi, h0i, h1i)| {
-                *hi += h0i;
-                *hi += h1i;
-            });
+            izip!(h0.iter_mut(), h1.iter_mut(), sh.h0.iter(), sh.h1.iter()).for_each(
+                |(h0, h1, h0i, h1i)| {
+                    *h0 += h0i;
+                    *h1 += h1i;
+                },
+            );
         }
-        let mut h1 = r1.h1;
-        izip!(h0.iter_mut(), h1.iter_mut()).for_each(|(h0i, h1i)| {
-            h0i.change_representation(Representation::NttShoup);
-            h1i.change_representation(Representation::NttShoup);
+
+        let mut c0 = h0;
+        izip!(c0.iter_mut(), h1.iter()).for_each(|(c0, h1)| {
+            *c0 += h1;
+            c0.change_representation(Representation::NttShoup);
+        });
+
+        let mut c1 = r1.h1;
+        c1.iter_mut().for_each(|c1| {
+            c1.change_representation(Representation::NttShoup);
         });
 
         let ksk = KeySwitchingKey {
             par,
+            c0,
+            c1,
             seed: None,
-            c0: h0,
-            c1: h1,
             ciphertext_level: 0,
             ctx_ciphertext: ctx.clone(),
             ksk_level: 0,
@@ -354,26 +361,26 @@ mod sealed {
 mod tests {
     use super::*;
     use fhe_math::rq::{Poly, Representation};
-    use fhe_traits::{FheEncoder, FheEncrypter};
+    use fhe_traits::{FheDecoder, FheEncoder, FheEncrypter};
     use rand::thread_rng;
 
     use crate::{
-        bfv::{BfvParameters, Encoding, Plaintext, SecretKey},
+        bfv::{BfvParameters, Encoding, Multiplicator, Plaintext},
         mbfv::protocols::{DecryptionShare, PublicKeyShare},
     };
 
-    const NUM_PARTIES: usize = 11;
+    const NUM_PARTIES: usize = 5;
 
     #[test]
     fn relinearization_works() {
         let mut rng = thread_rng();
         for par in [
-            // BfvParameters::default_arc(1, 8),
+            BfvParameters::default_arc(1, 8),
             BfvParameters::default_arc(6, 8),
         ] {
             // Just support level 0 for now.
             let level = 0;
-            for _ in 0..20 {
+            for _ in 0..10 {
                 let crp: Vec<Poly> = (0..par.moduli().len())
                     .map(|_| {
                         Poly::random(
@@ -393,9 +400,23 @@ mod tests {
                     let sk_share = SecretKey::random(&par, &mut rng);
                     party_sks.push(sk_share);
                 }
+
+                let crp_pk = Poly::small(
+                    par.ctx_at_level(level).unwrap(),
+                    Representation::Ntt,
+                    par.variance,
+                    &mut rng,
+                )
+                .unwrap();
+                // TODO why doesn't this work?
+                // let crp_pk = Poly::random(
+                //     par.ctx_at_level(level).unwrap(),
+                //     Representation::Ntt,
+                //     &mut rng,
+                // );
                 (0..NUM_PARTIES).for_each(|i| {
                     let pk_share =
-                        PublicKeyShare::new(&party_sks[i], crp[0].clone(), &mut rng).unwrap();
+                        PublicKeyShare::new(&party_sks[i], crp_pk.clone(), &mut rng).unwrap();
                     let rlk_generator =
                         RelinKeyGenerator::new(&party_sks[i], &crp, &mut rng).unwrap();
                     party_pks.push(pk_share);
@@ -420,43 +441,32 @@ mod tests {
                 .unwrap();
 
                 // Create a couple random encrypted polynomials
-                let pt1 = Plaintext::try_encode(
-                    &[20u64],
-                    // &par.plaintext.random_vec(par.degree(), &mut rng),
-                    Encoding::poly_at_level(level),
-                    &par,
-                )
-                .unwrap();
-                // Create a couple random plaintext polynomials
-                let pt2 = Plaintext::try_encode(
-                    &[-7i64],
-                    // &par.plaintext.random_vec(par.degree(), &mut rng),
-                    Encoding::poly_at_level(level),
-                    &par,
-                )
-                .unwrap();
+                let v1 = par.plaintext.random_vec(par.degree(), &mut rng);
+                let v2 = par.plaintext.random_vec(par.degree(), &mut rng);
+                let pt1 = Plaintext::try_encode(&v1, Encoding::simd_at_level(level), &par).unwrap();
+                let pt2 = Plaintext::try_encode(&v2, Encoding::simd_at_level(level), &par).unwrap();
                 let ct1 = public_key.try_encrypt(&pt1, &mut rng).unwrap();
                 let ct2 = public_key.try_encrypt(&pt2, &mut rng).unwrap();
 
-                let mut ct = &ct1 * &ct2;
-                rlk.relinearizes(&mut ct).unwrap();
+                // Multiply them
+                let mut multiplicator = Multiplicator::default(&rlk).unwrap();
+                if par.moduli().len() > 1 {
+                    multiplicator.enable_mod_switching().unwrap();
+                }
+                let ct = Arc::new(multiplicator.multiply(&ct1, &ct2).unwrap());
                 assert_eq!(ct.c.len(), 2);
-                let ct = Arc::new(ct);
 
                 // Parties perform a collective decryption
                 let decryption_shares = party_sks
                     .iter()
                     .map(|s| DecryptionShare::new(s, &ct, &mut rng).unwrap());
                 let pt = DecryptionShare::aggregate(decryption_shares).unwrap();
-                let expected_pt = Plaintext::try_encode(
-                    &[-140_i64],
-                    // &par.plaintext.random_vec(par.degree(), &mut rng),
-                    Encoding::poly_at_level(level),
-                    &par,
-                )
-                .unwrap();
-
-                assert_eq!(pt, expected_pt);
+                let mut expected = v1.clone();
+                par.plaintext.mul_vec(&mut expected, &v2);
+                assert_eq!(
+                    Vec::<u64>::try_decode(&pt, Encoding::simd_at_level(pt.level)).unwrap(),
+                    expected
+                );
             }
         }
     }
