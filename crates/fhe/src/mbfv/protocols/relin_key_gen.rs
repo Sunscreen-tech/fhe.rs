@@ -397,7 +397,6 @@ mod tests {
                     let sk_share = SecretKey::random(&par, &mut rng);
                     party_sks.push(sk_share);
                 }
-
                 // TODO figure out why this doesn't work with larger coefficients
                 let crp_pk = Poly::small(
                     par.ctx_at_level(level).unwrap(),
