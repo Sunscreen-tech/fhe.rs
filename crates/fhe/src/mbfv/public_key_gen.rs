@@ -1,8 +1,3 @@
-//! Public Key generation protocol.
-//!
-//! TODO:
-//! 1. Implement CRS->CRP common random polynomial + protocols around it
-
 use std::sync::Arc;
 
 use crate::bfv::{BfvParameters, Ciphertext, PublicKey, SecretKey};
@@ -13,8 +8,9 @@ use fhe_math::rq::{traits::TryConvertFrom, Poly, Representation};
 use rand::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
 
-/// Each party uses the `PublicKeyShare` to generate their share of the public key and participate
-/// in the "Protocol 1: EncKeyGen" protocol detailed in Multiparty BFV (p6).
+/// A party's share in public key generation protocol.
+///
+/// Each party uses the `PublicKeyShare` to generate their share of the public key and participate in the in the "Protocol 1: EncKeyGen", as detailed in [Multiparty BFV](https://eprint.iacr.org/2020/304.pdf) (p6). Use the [`Aggregate`] impl to combine the shares into a [`PublicKey`].
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PublicKeyShare {
     pub(crate) par: Arc<BfvParameters>,
@@ -23,7 +19,7 @@ pub struct PublicKeyShare {
 }
 
 impl PublicKeyShare {
-    /// Participate in a new EncKeyGen protocol
+    /// Participate in a new EncKeyGen protocol.
     ///
     /// 1. *Private input*: BFV secret key share
     /// 2. *Public input*: common random polynomial

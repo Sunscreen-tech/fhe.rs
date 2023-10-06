@@ -11,11 +11,15 @@ use crate::bfv::{BfvParameters, Ciphertext, Plaintext, SecretKey};
 use crate::mbfv::Aggregate;
 use crate::{Error, Result};
 
-/// Each party uses the `SecretKeySwitchShare` to generate their share of the new ciphertext and
-/// participate in the "Protocol 3: KeySwitch" protocol detailed in Multiparty BFV (p7).
+/// A party's share in the secret key switch protocol.
 ///
-/// Note: it appears the MBFV paper assumes the output key is split into the same number of parties
-/// as the input key.
+/// Each party uses the `SecretKeySwitchShare` to generate their share of the new ciphertext and
+/// participate in the "Protocol 3: KeySwitch" protocol detailed in [Multiparty
+/// BFV](https://eprint.iacr.org/2020/304.pdf) (p7). Use the [`Aggregate`] impl to combine the
+/// shares into a [`Ciphertext`].
+///
+/// Note: this protocol assumes the output key is split into the same number of parties as the
+/// input key, and is likely only useful for niche scenarios.
 pub struct SecretKeySwitchShare {
     pub(crate) par: Arc<BfvParameters>,
     /// The original input ciphertext
@@ -29,8 +33,8 @@ impl SecretKeySwitchShare {
     ///
     /// 1. *Private input*: BFV input secret key share
     /// 2. *Private input*: BFV output secret key share
-    /// 3. *Public input*: Ciphertext
-    /// 4. *Public input*: TODO: variance of the ciphertext noise
+    /// 3. *Public input*: Input ciphertext to keyswitch
+    // 4. *Public input*: TODO: variance of the ciphertext noise
     pub fn new<R: RngCore + CryptoRng>(
         sk_input_share: &SecretKey,
         sk_output_share: &SecretKey,
@@ -101,9 +105,12 @@ impl Aggregate<SecretKeySwitchShare> for Ciphertext {
     }
 }
 
-/// Each party uses the `DecryptionShare` to generate their share of the decrypted ciphertext.
+/// A party's share in the decryption protocol.
 ///
-/// This is the same thing as the `SecretKeySwitchShare` protocol, just with an output key of zero.
+/// Each party uses the `DecryptionShare` to generate their share of the plaintext output. Note
+/// that this is a special case of the "Protocol 3: KeySwitch" protocol detailed in [Multiparty
+/// BFV](https://eprint.iacr.org/2020/304.pdf) (p7), using an output key of zero. Use the
+/// [`Aggregate`] impl to combine the shares into a [`Plaintext`].
 pub struct DecryptionShare {
     pub(crate) sks_share: SecretKeySwitchShare,
 }
@@ -179,7 +186,7 @@ mod tests {
 
     use crate::{
         bfv::{BfvParameters, Encoding, Plaintext, PublicKey, SecretKey},
-        mbfv::{protocols::PublicKeyShare, Aggregate, AggregateIter},
+        mbfv::{Aggregate, AggregateIter, PublicKeyShare},
     };
 
     use super::*;

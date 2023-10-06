@@ -10,8 +10,10 @@ use crate::bfv::{BfvParameters, Ciphertext, PublicKey, SecretKey};
 use crate::mbfv::Aggregate;
 use crate::{Error, Result};
 
+/// A party's share in the public key switch protocol.
+///
 /// Each party uses the `PublicKeySwitchShare` to generate their share of the new ciphertext and
-/// participate in the "Protocol 4: PubKeySwitch" protocol detailed in Multiparty BFV (p7).
+/// participate in the "Protocol 4: PubKeySwitch" protocol detailed in as detailed in [Multiparty BFV](https://eprint.iacr.org/2020/304.pdf) (p7). Use the [`Aggregate`] impl to combine the shares into a [`Ciphertext`].
 pub struct PublicKeySwitchShare {
     pub(crate) par: Arc<BfvParameters>,
     /// The first component of the input ciphertext
@@ -21,12 +23,12 @@ pub struct PublicKeySwitchShare {
 }
 
 impl PublicKeySwitchShare {
-    /// Participate in a new PubKeySwitch protocol
+    /// Participate in a new PubKeySwitch protocol.
     ///
     /// 1. *Private input*: BFV secret key share
     /// 2. *Public input*: BFV output public key
     /// 3. *Public input*: Ciphertext
-    /// 4. *Public input*: TODO: variance of the ciphertext noise
+    // 4. *Public input*: TODO: variance of the ciphertext noise
     pub fn new<R: RngCore + CryptoRng>(
         sk_share: &SecretKey,
         public_key: &PublicKey,
@@ -112,7 +114,7 @@ mod tests {
 
     use crate::{
         bfv::{BfvParameters, Encoding, Plaintext, SecretKey},
-        mbfv::{aggregator::AggregateIter, protocols::PublicKeyShare},
+        mbfv::{AggregateIter, PublicKeyShare},
     };
 
     use super::*;

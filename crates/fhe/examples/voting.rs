@@ -7,11 +7,9 @@ use std::{env, error::Error, process::exit, sync::Arc};
 use console::style;
 use fhe::{
     bfv::{self, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey},
-    mbfv::{
-        protocols::{self, DecryptionShare, PublicKeyShare},
-        AggregateIter,
-    },
+    mbfv::{generate_crp, AggregateIter, DecryptionShare, PublicKeyShare},
 };
+use fhe_math::rq::Poly;
 use fhe_traits::{FheDecoder, FheEncoder, FheEncrypter};
 use rand::{distributions::Uniform, prelude::Distribution, rngs::OsRng, thread_rng};
 use util::timeit::{timeit, timeit_n};
@@ -94,7 +92,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .set_moduli(&moduli)
             .build_arc()?
     );
-    let crp = protocols::generate_crp(&params, &mut thread_rng())?;
+    let crp: Poly = generate_crp(&params, &mut thread_rng())?;
 
     // Party setup: each party generates a secret key and shares of a collective public key.
     struct Party {

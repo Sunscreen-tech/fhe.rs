@@ -1,8 +1,3 @@
-//! Relin Key generation protocol.
-//!
-//! TODO:
-//! 1. Implement CRS->CRP common random polynomial + protocols around it
-
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -16,28 +11,10 @@ use itertools::izip;
 use rand::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
 
-// TODO this API is messed up (see tests for example usage). Need to make it simple for both the
-// aggregator perspective and the individual party perpective.
-// Maybe make both a RlkShare and RlkAggregator type, both can use the Round types as markers.
-// Probably need to change up with Aggregate trait or just get rid of it in favor of .collect()
+use super::round::{R1Aggregated, Round, R1, R2};
 
-pub trait Round: sealed::Sealed {}
-
-/// Marks the shares produced in round 1
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct R1;
-/// Marks the aggregated shares from round 1
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct R1Aggregated;
-/// Marks the shares from round 2
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct R2;
-
-impl Round for R1 {}
-impl Round for R1Aggregated {}
-impl Round for R2 {}
-
-/// The publicly disclosed shares of a Relin Key Gen protocol round.
+/// A party's share in the relinearization key generation protocol.
+/// Use the [`RelinKeyGenerator`] to create these shares.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct RelinKeyShare<R: Round = R1> {
     pub(crate) par: Arc<BfvParameters>,
@@ -47,8 +24,45 @@ pub struct RelinKeyShare<R: Round = R1> {
     _phantom_data: PhantomData<R>,
 }
 
+/// A builder for creating relinearization key generation shares per party.
+///
 /// Each party uses the `RelinKeyGenerator` to generate their shares and participate in the
-/// "Protocol 2: RelinKeyGen" protocol detailed in Multiparty BFV (p6).
+/// "Protocol 2: RelinKeyGen" protocol detailed in [Multiparty
+/// BFV](https://eprint.iacr.org/2020/304.pdf) (p6). The shares need to be aggregated between
+/// rounds:
+///
+/// ```rust
+/// use std::sync::Arc;
+/// use fhe::bfv::{BfvParametersBuilder, RelinearizationKey, SecretKey};
+/// use fhe::mbfv::{Aggregate, RelinKeyGenerator, RelinKeyShare, generate_crp_vec, round::*};
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let parameters = BfvParametersBuilder::new()
+///         .set_degree(2048)
+///         .set_moduli(&[0x3fffffff000001])
+///         .set_plaintext_modulus(1 << 10)
+///         .build_arc()?;
+///
+/// // Party perspective
+/// let mut rng = rand::thread_rng();
+/// let sk_share = SecretKey::random(&parameters, &mut rng);
+/// let crp = generate_crp_vec(&parameters, &mut rng)?;
+/// let rlk_generator = RelinKeyGenerator::new(&sk_share, &crp, &mut rng)?;
+/// let rlk_r1_share = rlk_generator.round_1(&mut rng)?;
+///
+/// // Aggregator perspective
+/// let r1_shares = vec![rlk_r1_share]; // all party shares go here
+/// let rlk_r1_aggregated = RelinKeyShare::<R1Aggregated>::from_shares(r1_shares)?;
+///
+/// // Party perspective
+/// let rlk_r2_share = rlk_generator.round_2(&Arc::new(rlk_r1_aggregated), &mut rng)?;
+///
+/// // Aggregator perspective
+/// let r2_shares = vec![rlk_r2_share]; // all party shares go here
+/// let rlk = RelinearizationKey::from_shares(r2_shares)?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct RelinKeyGenerator<'a, 'b> {
     sk_share: &'a SecretKey,
     crp: &'b [Poly],
@@ -57,6 +71,9 @@ pub struct RelinKeyGenerator<'a, 'b> {
 
 impl<'a, 'b> RelinKeyGenerator<'a, 'b> {
     /// Create a new relin key generator for a given party.
+    ///
+    /// 1. *Private input*: BFV secret key share
+    /// 2. *Public input*: common random polynomial vector
     pub fn new<R: RngCore + CryptoRng>(
         sk_share: &'a SecretKey,
         crp: &'b [Poly],
@@ -75,12 +92,12 @@ impl<'a, 'b> RelinKeyGenerator<'a, 'b> {
         }
     }
 
-    /// Generate shares for round 1
+    /// Generate share for round 1
     pub fn round_1<R: RngCore + CryptoRng>(&self, rng: &mut R) -> Result<RelinKeyShare<R1>> {
         <RelinKeyShare<R1>>::new(self.sk_share, self.crp, &self.u, rng)
     }
 
-    /// Generate shares for round 2
+    /// Generate share for round 2
     pub fn round_2<R: RngCore + CryptoRng>(
         &self,
         r1: &Arc<RelinKeyShare<R1Aggregated>>,
@@ -360,10 +377,7 @@ mod tests {
 
     use crate::{
         bfv::{BfvParameters, Encoding, Multiplicator, Plaintext, PublicKey},
-        mbfv::{
-            protocols::{DecryptionShare, PublicKeyShare},
-            AggregateIter,
-        },
+        mbfv::{AggregateIter, DecryptionShare, PublicKeyShare},
     };
 
     const NUM_PARTIES: usize = 5;
