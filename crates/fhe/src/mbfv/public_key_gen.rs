@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use crate::bfv::{BfvParameters, Ciphertext, PublicKey, SecretKey};
 use crate::errors::Result;
-use crate::mbfv::Aggregate;
 use crate::Error;
 use fhe_math::rq::{traits::TryConvertFrom, Poly, Representation};
 use rand::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
+
+use super::{Aggregate, CommonRandomPoly};
 
 /// A party's share in public key generation protocol.
 ///
@@ -14,7 +15,7 @@ use zeroize::Zeroizing;
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct PublicKeyShare {
     pub(crate) par: Arc<BfvParameters>,
-    pub(crate) crp: Poly,
+    pub(crate) crp: CommonRandomPoly,
     pub(crate) p0_share: Poly,
 }
 
@@ -30,7 +31,7 @@ impl PublicKeyShare {
     // SecretKey::try_encrypt implementation, but with the hardcoded seed.
     pub fn new<R: RngCore + CryptoRng>(
         sk_share: &SecretKey,
-        crp: Poly,
+        crp: CommonRandomPoly,
         rng: &mut R,
     ) -> Result<Self> {
         let par = sk_share.par.clone();
@@ -48,7 +49,7 @@ impl PublicKeyShare {
         // Sample error
         let e = Zeroizing::new(Poly::small(ctx, Representation::Ntt, par.variance, rng)?);
         // Create p0_i share
-        let mut p0_share = -crp.clone();
+        let mut p0_share = -crp.poly.clone();
         p0_share.disallow_variable_time_computations();
         p0_share.change_representation(Representation::Ntt);
         p0_share *= s.as_ref();
@@ -71,7 +72,7 @@ impl Aggregate<PublicKeyShare> for PublicKey {
         }
 
         Ok(PublicKey {
-            c: Ciphertext::new(vec![p0, share.crp], &share.par)?,
+            c: Ciphertext::new(vec![p0, share.crp.poly], &share.par)?,
             par: share.par,
         })
     }
@@ -80,7 +81,7 @@ impl Aggregate<PublicKeyShare> for PublicKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fhe_math::rq::{Poly, Representation};
+
     use fhe_traits::{FheEncoder, FheEncrypter};
     use rand::thread_rng;
 
@@ -99,8 +100,7 @@ mod tests {
         ] {
             for level in 0..=par.max_level() {
                 for _ in 0..20 {
-                    let crp =
-                        Poly::random(par.ctx_at_level(0).unwrap(), Representation::Ntt, &mut rng);
+                    let crp = CommonRandomPoly::new(&par, &mut rng).unwrap();
 
                     let mut pk_shares: Vec<PublicKeyShare> = vec![];
 

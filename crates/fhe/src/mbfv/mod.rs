@@ -9,7 +9,7 @@ pub mod round;
 mod secret_key_switch;
 
 pub use aggregate::{Aggregate, AggregateIter};
-pub use crp::{generate_crp, generate_crp_leveled, generate_crp_vec};
+pub use crp::CommonRandomPoly;
 pub use public_key_gen::PublicKeyShare;
 pub use public_key_switch::PublicKeySwitchShare;
 pub use relin_key_gen::{RelinKeyGenerator, RelinKeyShare};

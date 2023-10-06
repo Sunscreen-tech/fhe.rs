@@ -7,8 +7,9 @@ use rand::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
 
 use crate::bfv::{BfvParameters, Ciphertext, PublicKey, SecretKey};
-use crate::mbfv::Aggregate;
 use crate::{Error, Result};
+
+use super::Aggregate;
 
 /// A party's share in the public key switch protocol.
 ///
@@ -108,13 +109,12 @@ impl Aggregate<PublicKeySwitchShare> for Ciphertext {
 mod tests {
     use std::sync::Arc;
 
-    use fhe_math::rq::{Poly, Representation};
     use fhe_traits::{FheDecrypter, FheEncoder, FheEncrypter};
     use rand::thread_rng;
 
     use crate::{
         bfv::{BfvParameters, Encoding, Plaintext, SecretKey},
-        mbfv::{AggregateIter, PublicKeyShare},
+        mbfv::{AggregateIter, CommonRandomPoly, PublicKeyShare},
     };
 
     use super::*;
@@ -135,8 +135,7 @@ mod tests {
         ] {
             for level in 0..=par.max_level() {
                 for _ in 0..20 {
-                    let crp =
-                        Poly::random(par.ctx_at_level(0).unwrap(), Representation::Ntt, &mut rng);
+                    let crp = CommonRandomPoly::new(&par, &mut rng).unwrap();
 
                     // Parties collectively generate public key
                     let mut parties: Vec<Party> = vec![];

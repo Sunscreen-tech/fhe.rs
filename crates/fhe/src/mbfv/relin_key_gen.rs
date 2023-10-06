@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use crate::bfv::{BfvParameters, KeySwitchingKey, RelinearizationKey, SecretKey};
 use crate::errors::Result;
-use crate::mbfv::Aggregate;
 use crate::Error;
 use fhe_math::rns::RnsContext;
 use fhe_math::rq::{traits::TryConvertFrom, Poly, Representation};
@@ -12,6 +11,7 @@ use rand::{CryptoRng, RngCore};
 use zeroize::Zeroizing;
 
 use super::round::{R1Aggregated, Round, R1, R2};
+use super::{Aggregate, CommonRandomPoly};
 
 /// A party's share in the relinearization key generation protocol.
 /// Use the [`RelinKeyGenerator`] to create these shares.
@@ -34,7 +34,7 @@ pub struct RelinKeyShare<R: Round = R1> {
 /// ```rust
 /// use std::sync::Arc;
 /// use fhe::bfv::{BfvParametersBuilder, RelinearizationKey, SecretKey};
-/// use fhe::mbfv::{Aggregate, RelinKeyGenerator, RelinKeyShare, generate_crp_vec, round::*};
+/// use fhe::mbfv::{Aggregate, CommonRandomPoly, RelinKeyGenerator, RelinKeyShare, round::*};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let parameters = BfvParametersBuilder::new()
@@ -46,7 +46,7 @@ pub struct RelinKeyShare<R: Round = R1> {
 /// // Party perspective
 /// let mut rng = rand::thread_rng();
 /// let sk_share = SecretKey::random(&parameters, &mut rng);
-/// let crp = generate_crp_vec(&parameters, &mut rng)?;
+/// let crp = CommonRandomPoly::new_vec(&parameters, &mut rng)?;
 /// let rlk_generator = RelinKeyGenerator::new(&sk_share, &crp, &mut rng)?;
 /// let rlk_r1_share = rlk_generator.round_1(&mut rng)?;
 ///
@@ -65,7 +65,7 @@ pub struct RelinKeyShare<R: Round = R1> {
 /// ```
 pub struct RelinKeyGenerator<'a, 'b> {
     sk_share: &'a SecretKey,
-    crp: &'b [Poly],
+    crp: &'b [CommonRandomPoly],
     u: Zeroizing<Poly>,
 }
 
@@ -76,7 +76,7 @@ impl<'a, 'b> RelinKeyGenerator<'a, 'b> {
     /// 2. *Public input*: common random polynomial vector
     pub fn new<R: RngCore + CryptoRng>(
         sk_share: &'a SecretKey,
-        crp: &'b [Poly],
+        crp: &'b [CommonRandomPoly],
         rng: &mut R,
     ) -> Result<Self> {
         let par = sk_share.par.clone();
@@ -110,7 +110,7 @@ impl<'a, 'b> RelinKeyGenerator<'a, 'b> {
 impl RelinKeyShare<R1> {
     fn new<R: RngCore + CryptoRng>(
         sk_share: &SecretKey,
-        crp: &[Poly],
+        crp: &[CommonRandomPoly],
         u: &Zeroizing<Poly>,
         rng: &mut R,
     ) -> Result<Self> {
@@ -136,7 +136,7 @@ impl RelinKeyShare<R1> {
 
     fn generate_h0<R: RngCore + CryptoRng>(
         sk_share: &SecretKey,
-        crp: &[Poly],
+        crp: &[CommonRandomPoly],
         u: &Zeroizing<Poly>,
         rng: &mut R,
     ) -> Result<Box<[Poly]>> {
@@ -160,7 +160,7 @@ impl RelinKeyShare<R1> {
 
                 let e = Zeroizing::new(Poly::small(ctx, Representation::Ntt, par.variance, rng)?);
 
-                let mut h = a.clone();
+                let mut h = a.poly.clone();
                 h.disallow_variable_time_computations();
                 h.change_representation(Representation::Ntt);
                 h *= u.as_ref();
@@ -174,7 +174,7 @@ impl RelinKeyShare<R1> {
 
     fn generate_h1<R: RngCore + CryptoRng>(
         sk_share: &SecretKey,
-        crp: &[Poly],
+        crp: &[CommonRandomPoly],
         rng: &mut R,
     ) -> Result<Box<[Poly]>> {
         let par = sk_share.par.clone();
@@ -190,7 +190,7 @@ impl RelinKeyShare<R1> {
         let h1 = crp
             .iter()
             .map(|a| {
-                let mut h = a.clone();
+                let mut h = a.poly.clone();
                 h.disallow_variable_time_computations();
                 h.change_representation(Representation::Ntt);
                 let e = Zeroizing::new(Poly::small(ctx, Representation::Ntt, par.variance, rng)?);
@@ -392,15 +392,7 @@ mod tests {
             // Just support level 0 for now.
             let level = 0;
             for _ in 0..10 {
-                let crp: Vec<Poly> = (0..par.moduli().len())
-                    .map(|_| {
-                        Poly::random(
-                            par.ctx_at_level(level).unwrap(),
-                            Representation::Ntt,
-                            &mut rng,
-                        )
-                    })
-                    .collect();
+                let crp = CommonRandomPoly::new_vec(&par, &mut rng).unwrap();
 
                 let mut party_sks: Vec<SecretKey> = vec![];
                 let mut party_pks: Vec<PublicKeyShare> = vec![];
@@ -412,13 +404,15 @@ mod tests {
                     party_sks.push(sk_share);
                 }
                 // TODO figure out why this doesn't work with larger coefficients
-                let crp_pk = Poly::small(
-                    par.ctx_at_level(level).unwrap(),
-                    Representation::Ntt,
-                    par.variance,
-                    &mut rng,
-                )
-                .unwrap();
+                let crp_pk = CommonRandomPoly {
+                    poly: Poly::small(
+                        par.ctx_at_level(level).unwrap(),
+                        Representation::Ntt,
+                        par.variance,
+                        &mut rng,
+                    )
+                    .unwrap(),
+                };
                 (0..NUM_PARTIES).for_each(|i| {
                     let pk_share =
                         PublicKeyShare::new(&party_sks[i], crp_pk.clone(), &mut rng).unwrap();
